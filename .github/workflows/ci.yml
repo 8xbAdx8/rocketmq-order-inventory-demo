@@ -1,0 +1,31 @@
+name: Java CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# CI 只需读取仓库内容，遵循最小权限原则。
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Unit tests (Java 17)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Set up Temurin JDK 17 and Maven cache
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Compile and run unit tests
+        run: mvn --batch-mode --no-transfer-progress test

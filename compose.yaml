@@ -1,0 +1,99 @@
+name: rocketmq-order-demo
+
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: rocketmq_learning
+      # 未配置时直接拒绝启动，避免把固定密码写进版本库或镜像。
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:?请复制 .env.example 为 .env 并设置密码}"
+      # MySQL 官方镜像会创建该业务账号，并只授予 rocketmq_learning 数据库权限。
+      # Spring Boot 不再使用 root 账号，遵循最小权限原则。
+      MYSQL_USER: rocketmq_app
+      MYSQL_PASSWORD: "${MYSQL_APP_PASSWORD:?请在 .env 中设置业务数据库密码}"
+      TZ: Asia/Shanghai
+    ports:
+      # 本机 3306 通常已被 IDEA 使用的 MySQL 占用，因此对外映射到 3307。
+      # 应用容器仍通过 mysql:3306 连接，不受宿主机端口变化影响。
+      # 绑定 127.0.0.1，避免同一局域网中的其他设备访问数据库。
+      - "127.0.0.1:3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$${MYSQL_ROOT_PASSWORD}\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  namesrv:
+    image: apache/rocketmq:5.3.2
+    command: sh mqnamesrv
+    ports:
+      # 仅允许本机调试工具访问 NameServer。
+      - "127.0.0.1:9876:9876"
+    environment:
+      JAVA_OPT_EXT: "-Xms256m -Xmx256m -Xmn128m"
+
+  # Docker 新建的命名卷默认为 root 所有，而 RocketMQ 镜像使用 uid/gid 3000 运行。
+  # 该一次性容器先修正存储和日志目录所有者，完成后 Broker 才会启动。
+  rocketmq-volume-init:
+    image: apache/rocketmq:5.3.2
+    user: "0:0"
+    entrypoint: ["sh", "-c"]
+    command: ["chown -R 3000:3000 /store /logs"]
+    volumes:
+      - broker_store:/store
+      - broker_logs:/logs
+    restart: "no"
+
+  broker:
+    image: apache/rocketmq:5.3.2
+    command:
+      - sh
+      - mqbroker
+      - -n
+      - namesrv:9876
+      - -c
+      - /home/rocketmq/rocketmq-5.3.2/conf/broker.conf
+    depends_on:
+      namesrv:
+        condition: service_started
+      rocketmq-volume-init:
+        condition: service_completed_successfully
+    environment:
+      NAMESRV_ADDR: namesrv:9876
+      JAVA_OPT_EXT: "-Xms512m -Xmx512m -Xmn256m"
+    ports:
+      # Broker 端口只暴露给本机；Compose 内部服务仍通过 broker:端口通信。
+      - "127.0.0.1:10909:10909"
+      - "127.0.0.1:10911:10911"
+    volumes:
+      - ./infrastructure/rocketmq/conf/broker-compose.conf:/home/rocketmq/rocketmq-5.3.2/conf/broker.conf:ro
+      - broker_store:/home/rocketmq/store
+      - broker_logs:/home/rocketmq/logs
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      mysql:
+        condition: service_healthy
+      broker:
+        condition: service_started
+    environment:
+      MYSQL_URL: jdbc:mysql://mysql:3306/rocketmq_learning?serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true
+      MYSQL_USERNAME: rocketmq_app
+      MYSQL_PASSWORD: "${MYSQL_APP_PASSWORD:?请在 .env 中设置业务数据库密码}"
+      ROCKETMQ_NAME_SERVER: namesrv:9876
+      JAVA_TOOL_OPTIONS: "-Dfile.encoding=UTF-8"
+    ports:
+      # REST API 仅供本机演示，避免未鉴权接口暴露到局域网。
+      - "127.0.0.1:8080:8080"
+    restart: on-failure:5
+
+volumes:
+  mysql_data:
+  broker_store:
+  broker_logs:

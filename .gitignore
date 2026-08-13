@@ -1,0 +1,23 @@
+# Maven 编译输出目录
+/target/
+
+# Codex 验证时使用的项目内 Maven 依赖缓存
+/.m2/
+
+# RocketMQ 本地发行包、日志和消息存储（配置文件仍保留在项目中）
+/infrastructure/rocketmq/downloads/
+/infrastructure/rocketmq/runtime/
+/infrastructure/rocketmq/data/
+
+# IntelliJ IDEA 本地工程配置
+/.idea/
+*.iml
+
+# 常见运行日志
+*.log
+
+# 本地环境配置可能包含密码，后续创建时不应提交
+/src/main/resources/application-local.yml
+
+# Docker Compose 本地变量文件可能包含密码；只提交 .env.example。
+/.env

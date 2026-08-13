@@ -1,0 +1,17 @@
+.git
+.github
+.idea
+.m2
+# 只允许可执行 JAR 进入构建上下文，排除 target 下的编译中间文件。
+target/*
+!target/rocketmq-learning-*.jar
+*.iml
+*.log
+
+# 本地 RocketMQ 发行包、日志和消息存储体积较大，不能进入应用构建上下文。
+infrastructure/rocketmq/downloads
+infrastructure/rocketmq/runtime
+infrastructure/rocketmq/data
+
+# 可能含本地密码的覆盖配置不进入镜像。
+src/main/resources/application-local.yml

@@ -1,0 +1,86 @@
+spring:
+  application:
+    # 应用名称会出现在日志、监控和服务治理信息中。
+    # 后续拆分订单服务和库存服务时，每个服务应使用不同名称。
+    name: rocketmq-learning
+
+  datasource:
+    # 本地默认连接 rocketmq_learning；部署时可用 MYSQL_URL 整体覆盖。
+    # allowPublicKeyRetrieval 只为本地无 TLS 的 MySQL 8 开发环境服务，生产环境应使用 TLS。
+    url: "${MYSQL_URL:jdbc:mysql://127.0.0.1:3306/rocketmq_learning?serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true}"
+    # 账号可以有本地默认值，密码不能提交到代码仓库，必须通过环境变量提供。
+    username: "${MYSQL_USERNAME:root}"
+    password: "${MYSQL_PASSWORD:}"
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      # 连接池上限不是越大越好；它必须与数据库连接上限及应用实例数量共同规划。
+      maximum-pool-size: 10
+      minimum-idle: 2
+      # 连接获取超过 3 秒就快速失败，避免请求线程无限等待。
+      connection-timeout: 3000
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    # 启动时校验已执行迁移的校验和，防止历史脚本被偷偷修改。
+    validate-on-migrate: true
+    # 禁止应用执行 clean，避免误删整个数据库中的对象。
+    clean-disabled: true
+
+# 在每一行日志中固定输出消息追踪字段。没有消息上下文时显示“-”。
+# 生产环境通常会改用 JSON Encoder，再由 ELK、Loki 等平台按字段检索。
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} [messageType=%X{messageType:--}] [eventId=%X{eventId:--}] [businessKey=%X{businessKey:--}] [consumerGroup=%X{consumerGroup:--}] - %msg%n"
+
+rocketmq:
+  # NameServer 是 RocketMQ 的路由注册中心，客户端先通过它查询 Topic 所在的 Broker。
+  # ${环境变量:默认值} 表示：部署环境可覆盖，本地开发默认连接 127.0.0.1:9876。
+  name-server: "${ROCKETMQ_NAME_SERVER:127.0.0.1:9876}"
+
+  producer:
+    # Producer Group 标识一类发送相同业务消息的生产者实例。
+    # 组名应该稳定、可读，不要使用随机值；后续事务消息回查也会用到它。
+    group: "${ROCKETMQ_PRODUCER_GROUP:rocketmq-learning-producer-group}"
+
+    # 单次发送最多等待 Broker 5 秒。超时必须反馈给业务，不能无限阻塞请求线程。
+    send-message-timeout: 5000
+    # 同步发送失败后由客户端额外重试 2 次；总尝试次数不是无限的，避免故障时放大流量。
+    retry-times-when-send-failed: 2
+    # 异步发送使用独立的重试参数，最终结果仍通过 SendCallback 返回。
+    retry-times-when-send-async-failed: 2
+    # 当前 Broker 失败时尝试 Topic 路由中的其他 Broker；单 Broker 本地环境不会因此获得高可用。
+    retry-next-server: true
+
+# 与中间件连接参数分开：这些是当前教学业务使用的 Topic 和 Tag。
+# 后续若拆分多个业务模块，每个模块可维护自己的消息配置。
+demo:
+  rocketmq:
+    # Topic 表示一类业务事件，类似于消息的一级分类。
+    topic: "${DEMO_ROCKETMQ_TOPIC:learning-message-topic}"
+    # Tag 是 Topic 内的二级分类，Consumer 后续可以只订阅指定 Tag。
+    sync-tag: "${DEMO_ROCKETMQ_SYNC_TAG:sync}"
+    # Consumer Group 表示共同承担一份消费任务的消费者实例。
+    # 同一组内的多个实例会分担 Message Queue，而不是每个实例都处理全部消息。
+    sync-consumer-group: "${DEMO_ROCKETMQ_SYNC_CONSUMER_GROUP:learning-sync-consumer-group}"
+
+    # 第三阶段的订单业务使用独立 Topic，不与前面的基础字符串示例混在一起。
+    # Topic 代表“订单领域事件”这一大类消息。
+    order-topic: "${DEMO_ROCKETMQ_ORDER_TOPIC:order-event-topic}"
+    # Tag 进一步说明事件类型：这里只订阅“订单已创建”。
+    order-created-tag: "${DEMO_ROCKETMQ_ORDER_CREATED_TAG:order-created}"
+    # 该 Group 表示共同承担库存扣减任务的一组库存消费者。
+    # 将来即使启动多个库存服务实例，同一条消息在这个 Group 内也只会分配给一个实例。
+    inventory-consumer-group: "${DEMO_ROCKETMQ_INVENTORY_CONSUMER_GROUP:inventory-deduct-consumer-group}"
+
+    # 订单超时检查与订单创建共用 Topic，通过独立 Tag 区分事件类型。
+    order-timeout-tag: "${DEMO_ROCKETMQ_ORDER_TIMEOUT_TAG:order-timeout-check}"
+    # 默认延迟 30 分钟。集成测试会覆盖成几秒，避免测试真的等待 30 分钟。
+    order-timeout-delay-seconds: "${DEMO_ROCKETMQ_ORDER_TIMEOUT_DELAY_SECONDS:1800}"
+    # 超时取消是一份独立消费任务，不能与库存消费者共用 Consumer Group。
+    order-timeout-consumer-group: "${DEMO_ROCKETMQ_ORDER_TIMEOUT_CONSUMER_GROUP:order-timeout-consumer-group}"
+
+    # 同一个订单的生命周期事件使用 orderNo 作为队列选择键，固定进入同一个 Message Queue。
+    order-lifecycle-tag: "${DEMO_ROCKETMQ_ORDER_LIFECYCLE_TAG:order-lifecycle}"
+    # ORDERLY Consumer 独立承担订单状态流转事件，不能与其他消费语义共用 Group。
+    order-lifecycle-consumer-group: "${DEMO_ROCKETMQ_ORDER_LIFECYCLE_CONSUMER_GROUP:order-lifecycle-consumer-group}"
